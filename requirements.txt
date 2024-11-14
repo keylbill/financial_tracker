@@ -1,0 +1,13 @@
+yfinance
+requests
+python-telegram-bot
+pandas
+numpy
+schedule
+sqlalchemy
+textblob
+vaderSentiment
+praw
+tweepy
+ta-lib
+timeout-decorator
