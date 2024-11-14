@@ -15,17 +15,23 @@ TECHNICAL_ANALYSIS_SETTINGS = {
     'RSI_PERIOD': 14,
     'RSI_OVERSOLD': 30,
     'RSI_OVERBOUGHT': 70,
-    'MOVING_AVERAGE_PERIODS': [20, 50, 200]
+    'MOVING_AVERAGE_PERIODS': [20, 50, 200],
+    'CACHE_TTL_MINUTES': 15  # Add cache timeout setting
 }
 
 # Risk Management Settings
 RISK_MANAGEMENT_SETTINGS = {
-    'MAX_POSITION_SIZE': 0.02,  # 2% of portfolio
-    'STOP_LOSS_PERCENTAGE': 0.05,
-    'TAKE_PROFIT_RATIO': 2  # Risk:Reward ratio
+    'ACCOUNT_SIZE': 100000,          # Your trading account size
+    'MAX_POSITION_SIZE': 0.02,       # 2% of portfolio
+    'RISK_PER_TRADE': 0.02,         # 2% risk per trade
+    'STOP_LOSS_PERCENTAGE': 0.05,    # 5% stop loss
+    'TAKE_PROFIT_RATIO': 2.0,        # Risk:Reward ratio (add .0 for clarity)
+    'MIN_POSITION_SIZE': 100         # Add minimum position size
 }
 
-# Account and Risk Management Settings
-ACCOUNT_SIZE = 100000  # Your trading account size
-RISK_PER_TRADE = 0.02  # 2% risk per trade
-STOP_LOSS_PERCENTAGE = 0.05  # 5% stop loss
+# Add logging configuration
+LOGGING_CONFIG = {
+    'LEVEL': 'INFO',
+    'FORMAT': '%(asctime)s - %(levelname)s - %(message)s',
+    'FILENAME': 'financial_tracker.log'
+}

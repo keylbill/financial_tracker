@@ -1,34 +1,65 @@
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union, List
 import logging
 from config import TECHNICAL_ANALYSIS_SETTINGS
 from functools import lru_cache
 from datetime import datetime, timedelta
+import requests
 
 logger = logging.getLogger(__name__)
 
 class CachedData:
-    def __init__(self, data, timestamp):
+    def __init__(self, data, timestamp, ttl_minutes: int = 15):
         self.data = data
         self.timestamp = timestamp
+        self.ttl_minutes = ttl_minutes
 
     @property
-    def is_valid(self, ttl_minutes: int = 15):
-        return datetime.now() - self.timestamp < timedelta(minutes=ttl_minutes)
+    def is_valid(self) -> bool:
+        return datetime.now() - self.timestamp < timedelta(minutes=self.ttl_minutes)
 
 class TechnicalAnalyzer:
+    STRONG_BUY_THRESHOLD: int = 2
+    STRONG_SELL_THRESHOLD: int = -2
+    BUY_THRESHOLD: int = 1
+    SELL_THRESHOLD: int = -1
+    
+    SIGNAL_TYPES: Dict[str, str] = {
+        'STRONG_BUY': 'strong_buy',
+        'BUY': 'buy',
+        'STRONG_SELL': 'strong_sell',
+        'SELL': 'sell',
+        'NEUTRAL': 'neutral'
+    }
+    
     def __init__(self, ticker: str):
+        """
+        Initialize TechnicalAnalyzer with a ticker symbol.
+        
+        Args:
+            ticker: Stock ticker symbol to analyze
+        """
+        if not isinstance(ticker, str) or not ticker:
+            raise ValueError("Ticker must be a non-empty string")
+            
         self.ticker = ticker
         self.stock = yf.Ticker(ticker)
         self.settings = TECHNICAL_ANALYSIS_SETTINGS
-        self._cache = {}
+        self._cache: Dict[str, CachedData] = {}
         
     @lru_cache(maxsize=100)
     def get_historical_data(self, period: str = '1y') -> pd.DataFrame:
         """Cached version of historical data retrieval"""
-        return self._fetch_historical_data(self.ticker, period)
+        cache_key = f"{self.ticker}_{period}"
+        cached_data = self.get_cached_data(cache_key)
+        if cached_data is not None:
+            return cached_data
+        
+        data = self._fetch_historical_data(self.ticker, period)
+        self._cache[cache_key] = CachedData(data, datetime.now())
+        return data
 
     def _fetch_historical_data(self, ticker: str, period: str) -> pd.DataFrame:
         """Fetch historical data for technical analysis"""
@@ -38,8 +69,25 @@ class TechnicalAnalyzer:
             logger.error(f"Error fetching historical data for {ticker}: {e}")
             return pd.DataFrame()
 
-    def calculate_rsi(self, data: pd.DataFrame, period: int = None) -> pd.Series:
-        """Calculate Relative Strength Index"""
+    def calculate_rsi(self, data: pd.DataFrame, period: Optional[int] = None) -> pd.Series:
+        """
+        Calculate Relative Strength Index.
+        
+        Args:
+            data: DataFrame containing price data
+            period: RSI calculation period (defaults to settings value)
+            
+        Returns:
+            pd.Series containing RSI values
+            
+        Raises:
+            ValueError: If data is empty or missing required columns
+        """
+        if data.empty:
+            raise ValueError("Input DataFrame is empty")
+        if 'Close' not in data.columns:
+            raise ValueError("DataFrame must contain 'Close' column")
+            
         if period is None:
             period = self.settings['RSI_PERIOD']
             
@@ -47,7 +95,8 @@ class TechnicalAnalyzer:
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
         
-        rs = gain / loss
+        # Handle division by zero
+        rs = gain / loss.replace(0, float('inf'))
         rsi = 100 - (100 / (1 + rs))
         return rsi
 
@@ -63,16 +112,17 @@ class TechnicalAnalyzer:
 
     def calculate_moving_averages(self, data: pd.DataFrame) -> Dict[int, pd.Series]:
         """Calculate multiple moving averages"""
-        mas = {}
-        for period in self.settings['MOVING_AVERAGE_PERIODS']:
-            mas[period] = data['Close'].rolling(window=period).mean()
-        return mas
+        return {
+            period: data['Close'].rolling(window=period).mean()
+            for period in self.settings['MOVING_AVERAGE_PERIODS']
+        }
 
     def analyze_technical_indicators(self) -> Dict:
         """Main function to analyze all technical indicators"""
         try:
             data = self.get_historical_data()
             if data.empty:
+                logger.warning(f"No historical data available for {self.ticker}")
                 return {}
 
             # Calculate RSI
@@ -119,13 +169,22 @@ class TechnicalAnalyzer:
             
             return analysis
 
+        except pd.errors.EmptyDataError:
+            logger.error(f"Empty data received for {self.ticker}")
+            return {}
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error while analyzing {self.ticker}: {e}")
+            return {}
         except Exception as e:
-            logger.error(f"Error analyzing technical indicators for {self.ticker}: {e}")
+            logger.error(f"Unexpected error analyzing {self.ticker}: {e}")
             return {}
 
-    def _generate_overall_signal(self, rsi_signal: str, 
-                               macd_signal: str, 
-                               ma_signals: Dict) -> str:
+    def _generate_overall_signal(
+        self,
+        rsi_signal: str,
+        macd_signal: str,
+        ma_signals: Dict[int, Dict[str, Union[float, str]]]
+    ) -> str:
         """Generate overall trading signal based on all indicators"""
         signals = []
         
@@ -152,16 +211,16 @@ class TechnicalAnalyzer:
         
         # Calculate final signal
         signal_sum = sum(signals)
-        if signal_sum >= 2:
-            return 'strong_buy'
-        elif signal_sum >= 1:
-            return 'buy'
-        elif signal_sum <= -2:
-            return 'strong_sell'
-        elif signal_sum <= -1:
-            return 'sell'
+        if signal_sum >= self.STRONG_BUY_THRESHOLD:
+            return self.SIGNAL_TYPES['STRONG_BUY']
+        elif signal_sum >= self.BUY_THRESHOLD:
+            return self.SIGNAL_TYPES['BUY']
+        elif signal_sum <= self.STRONG_SELL_THRESHOLD:
+            return self.SIGNAL_TYPES['STRONG_SELL']
+        elif signal_sum <= self.SELL_THRESHOLD:
+            return self.SIGNAL_TYPES['SELL']
         else:
-            return 'neutral'
+            return self.SIGNAL_TYPES['NEUTRAL']
 
     def get_cached_data(self, key: str) -> Optional[pd.DataFrame]:
         if key in self._cache:
